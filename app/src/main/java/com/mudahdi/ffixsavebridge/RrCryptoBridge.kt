@@ -1,6 +1,6 @@
 package com.mudahdi.ffixsavebridge
 
-import java.security.spec.PBEKeySpec
+import javax.crypto.spec.PBEKeySpec
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.IvParameterSpec
