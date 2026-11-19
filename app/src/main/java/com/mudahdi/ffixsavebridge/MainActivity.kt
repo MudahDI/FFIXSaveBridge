@@ -35,13 +35,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.mudahdi.ffixsavebridge.core.Ps1MemoryCardInspector
+import com.mudahdi.ffixsavebridge.core.Ps1SaveEntry
 import java.io.FileNotFoundException
 
 private data class SelectedSave(
     val name: String,
     val size: Long,
     val kind: String,
-    val note: String
+    val note: String,
+    val entries: List<Ps1SaveEntry> = emptyList()
 )
 
 class MainActivity : ComponentActivity() {
@@ -82,21 +85,37 @@ private fun SaveBridgeScreen() {
             error = null
             try {
                 val name = queryDisplayName(context, uri)
-                val size = context.contentResolver.openAssetFileDescriptor(uri, "r")?.use {
-                    it.length
-                } ?: -1L
-                val kind = classifyCandidate(size)
-                selected = SelectedSave(
-                    name = name,
-                    size = size,
-                    kind = kind.first,
-                    note = kind.second
-                )
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw FileNotFoundException("Could not open selected file")
+                val size = bytes.size.toLong()
+
+                if (size == 131_072L) {
+                    val inspection = Ps1MemoryCardInspector.inspect(bytes)
+                    selected = SelectedSave(
+                        name = name,
+                        size = size,
+                        kind = if (inspection.isMemoryCard) {
+                            "Image kartu memori PS1 terdeteksi"
+                        } else {
+                            "Kandidat kartu memori PS1 — header tidak valid"
+                        },
+                        note = inspection.message,
+                        entries = inspection.saves
+                    )
+                } else {
+                    val kind = classifyCandidate(size)
+                    selected = SelectedSave(
+                        name = name,
+                        size = size,
+                        kind = kind.first,
+                        note = kind.second
+                    )
+                }
             } catch (_: FileNotFoundException) {
                 error = "File tidak dapat dibuka. Coba pilih file lain."
                 selected = null
             } catch (_: Exception) {
-                error = "Gagal membaca informasi file."
+                error = "Gagal membaca atau memeriksa file."
                 selected = null
             } finally {
                 isReading = false
@@ -105,9 +124,7 @@ private fun SaveBridgeScreen() {
     }
 
     Scaffold(
-        topBar = {
-            TopAppBar(title = { Text("FFIX Save Bridge") })
-        }
+        topBar = { TopAppBar(title = { Text("FFIX Save Bridge") }) }
     ) { insets ->
         Column(
             modifier = Modifier
@@ -134,10 +151,7 @@ private fun SaveBridgeScreen() {
                             Icons.Outlined.Save,
                             contentDescription = null
                         )
-                        Text(
-                            "  Sumber save",
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        Text("  Sumber save", style = MaterialTheme.typography.titleMedium)
                     }
                     Text(
                         "Pilih file kartu memori DuckStation (.mcd, .mcr, .srm) atau dump save PS1.",
@@ -163,21 +177,47 @@ private fun SaveBridgeScreen() {
                         modifier = Modifier.padding(18.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("File terpilih", style = MaterialTheme.typography.titleMedium)
+                        Text("Hasil pemeriksaan", style = MaterialTheme.typography.titleMedium)
                         Text(save.name, style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            if (save.size >= 0) "Ukuran: ${save.size} byte" else "Ukuran tidak diketahui",
-                            style = MaterialTheme.typography.bodySmall
-                        )
+                        Text("Ukuran: ${save.size} byte", style = MaterialTheme.typography.bodySmall)
                         Text(save.kind, color = MaterialTheme.colorScheme.primary)
                         Text(save.note, style = MaterialTheme.typography.bodyMedium)
+
+                        if (save.entries.isNotEmpty()) {
+                            Text("Save FFIX pada kartu", style = MaterialTheme.typography.titleSmall)
+                            save.entries.forEach { entry ->
+                                val status = if (entry.fullyValidated) {
+                                    "Lolos validasi"
+                                } else {
+                                    buildList {
+                                        if (!entry.directoryChecksumValid) add("checksum direktori")
+                                        if (!entry.saveHeaderValid) add("header save")
+                                        if (!entry.saveCrcValid) add("CRC save")
+                                    }.joinToString()
+                                }
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        "Blok ${entry.blockNumber} · ${entry.region}",
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Text(entry.directoryName, style = MaterialTheme.typography.bodySmall)
+                                    Text(
+                                        status,
+                                        color = if (entry.fullyValidated) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme.error
+                                        },
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
 
-            error?.let {
-                Text(it, color = MaterialTheme.colorScheme.error)
-            }
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
             Card(colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.secondaryContainer
@@ -188,9 +228,8 @@ private fun SaveBridgeScreen() {
                 ) {
                     Text("Status pengembangan", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Fondasi pemilihan file sudah tersedia. Pemeriksaan struktur save, " +
-                            "pemetaan data PS1 ke format PC, dan ekspor SavedData_ww.dat " +
-                            "belum diaktifkan. Aplikasi tidak akan mengubah file sumber.",
+                        "Pembaca kartu memori PS1 dan pemeriksaan awal save FFIX sudah dibuat. " +
+                            "Konversi ke SavedData_ww.dat belum tersedia. File sumber tidak pernah diubah.",
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
@@ -201,12 +240,10 @@ private fun SaveBridgeScreen() {
 }
 
 private fun classifyCandidate(size: Long): Pair<String, String> = when (size) {
-    131_072L -> "Kandidat kartu memori PS1 (128 KiB)" to
-        "Ukuran cocok dengan image kartu memori standar. Isi dan checksum belum divalidasi."
     8_192L -> "Kandidat blok save PS1 (8 KiB)" to
-        "Ukuran cocok dengan blok save mentah. Header dan checksum belum divalidasi."
+        "Ukuran cocok dengan blok save mentah. Struktur dan checksum belum diperiksa."
     8_320L -> "Kandidat wrapper save PS1 (8,320 byte)" to
-        "Ukuran cocok dengan wrapper yang dikenal. Struktur internal belum divalidasi."
+        "Ukuran cocok dengan wrapper yang dikenal. Struktur internal belum diperiksa."
     2_937_152L -> "Kandidat container save PC/Steam" to
         "Ukuran cocok dengan container rr2016. Dekripsi dan integritas belum diperiksa."
     else -> "Format belum dikenali" to
