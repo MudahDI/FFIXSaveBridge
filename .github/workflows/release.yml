@@ -1,0 +1,60 @@
+name: Publish v1.0.0
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message == 'Prepare FFIX Save Bridge v1.0.0 release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Run unit tests
+        run: gradle testDebugUnitTest
+
+      - name: Build installable APK
+        run: gradle assembleDebug
+
+      - name: Prepare release APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/FFIXSaveBridge-v1.0.0.apk
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: FFIX Save Bridge 1.0.0
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          body: |
+            First public release of FFIX Save Bridge.
+
+            - Convert DuckStation PS1 memory-card saves to the vanilla FFIX PC/Steam format.
+            - Export a ZIP containing SavedData_ww.dat for FF9Recomp.
+            - Offline conversion with on-device validation.
+
+            The attached APK is debug-signed and can be installed directly. Keep a backup of your original memory-card image.
+          files: app/build/outputs/apk/debug/FFIXSaveBridge-v1.0.0.apk
+          fail_on_unmatched_files: true
