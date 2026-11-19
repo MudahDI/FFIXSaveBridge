@@ -42,9 +42,11 @@ def inspect_file(path):
     return json.dumps({"container": container_name, "entries": result})
 
 
-def convert_file(input_path, output_path):
+def convert_file(input_path, output_path, selected_block=None):
     raw = Path(input_path).read_bytes()
     container_name, entries = _ffix_entries(raw)
+    if selected_block is not None:
+        entries = [entry for entry in entries if entry.block_index == int(selected_block)]
     if not entries:
         raise ValueError("Tidak ditemukan save Final Fantasy IX pada file ini.")
     if len(entries) > pc_container.SAVE_COUNT:
